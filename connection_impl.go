@@ -264,8 +264,20 @@ var barrierPool = sync.Pool{
 	},
 }
 
+var connsmap sync.Map // key: fd, value: *connection
+
 // init arguments: conn is required, prepare is optional.
 func (c *connection) init(conn Conn, prepare OnPrepare) (err error) {
+	defer func() {
+		if !c.IsActive() {
+			return
+		}
+		c.AddCloseCallback(func(connection Connection) error {
+			connsmap.Delete(c.Fd())
+			return nil
+		})
+		connsmap.Store(c.Fd(), c)
+	}()
 	// conn must be *netFD{}
 	c.checkNetFD(conn)
 

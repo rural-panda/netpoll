@@ -23,6 +23,7 @@ import (
 	"reflect"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/bytedance/gopkg/lang/mcache"
@@ -804,6 +805,7 @@ func malloc(size, capacity int) []byte {
 	if capacity > mallocMax {
 		return make([]byte, size, capacity)
 	}
+	atomic.AddUint32(&mallocNum, 1)
 	return mcache.Malloc(size, capacity)
 }
 
@@ -812,5 +814,31 @@ func free(buf []byte) {
 	if cap(buf) > mallocMax {
 		return
 	}
+	atomic.AddUint32(&freeNum, 1)
 	mcache.Free(buf)
+}
+
+var mallocNum, freeNum uint32
+
+func init() {
+	go func() {
+		for t := range time.Tick(5 * time.Second) {
+			var conns, input, output int
+			connsmap.Range(func(key, value interface{}) bool {
+				c, _ := value.(*connection)
+				if c == nil {
+					return true
+				}
+				conns++
+				input += c.inputBuffer.Len() + c.inputBuffer.MallocLen()
+				output += c.outputBuffer.Len() + c.outputBuffer.MallocLen()
+				return true
+			})
+			var mallocnum, freenum = atomic.LoadUint32(&mallocNum), atomic.LoadUint32(&freeNum)
+			fmt.Printf(
+				"NETPOLL: conns[%d], input[%dKB], output[%dKB], malloc[%d], free[%d], time:%s\n",
+				conns, input/1024, output/1024,
+				mallocnum, freenum, t.String())
+		}
+	}()
 }
