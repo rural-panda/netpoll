@@ -106,6 +106,7 @@ func (r *zcReader) Until(delim byte) (line []byte, err error) {
 	return r.buf.Until(delim)
 }
 
+// 所有的read 基本都是底层调用 waitRead 实现的，这里还是循环判断buf 长度，不足 n 的时候，就不断进行fill
 func (r *zcReader) waitRead(n int) (err error) {
 	for r.buf.Len() < n {
 		err = r.fill(n)
@@ -120,10 +121,12 @@ func (r *zcReader) waitRead(n int) (err error) {
 }
 
 // fill buffer to greater than n, range no more than 16 times.
+// 读取底层数据，写入buffer，最多尝试16次，每次
 func (r *zcReader) fill(n int) (err error) {
 	var buf []byte
 	var num int
 	for i := 0; i < maxReadCycle && r.buf.Len() < n && err == nil; i++ {
+		// 
 		buf, err = r.buf.Malloc(block4k)
 		if err != nil {
 			return err

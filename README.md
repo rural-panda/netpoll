@@ -75,6 +75,10 @@ the performance of [Netpoll][Netpoll] and other frameworks under different condi
 
 More benchmarks reference [kitex-benchmark][kitex-benchmark] and [hertz-benchmark][hertz-benchmark] (open source soon).
 
+
+## 建议阅读顺序
+先阅读 nocopy_linkerbuffer 然后是 nocopy和nocopy_readwriter 最后是 connetion 
+
 ## Reference
 
 * [Official Website](https://www.cloudwego.io)

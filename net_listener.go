@@ -96,6 +96,7 @@ func (ln *listener) Accept() (net.Conn, error) {
 		return ln.UDPAccept()
 	}
 	// tcp
+	// TODO: 为什么用syscall 的
 	var fd, sa, err = syscall.Accept(ln.fd)
 	if err != nil {
 		if err == syscall.EAGAIN {

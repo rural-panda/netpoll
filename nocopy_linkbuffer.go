@@ -49,8 +49,9 @@ func NewLinkBuffer(size ...int) *LinkBuffer {
 }
 
 // LinkBuffer implements ReadWriter.
+// 实现一个buffer
 type LinkBuffer struct {
-	length     int32
+	length     int32 // buffer 可读取总数据量大小
 	mallocSize int
 
 	head  *linkBufferNode // release head
@@ -61,6 +62,7 @@ type LinkBuffer struct {
 	caches [][]byte // buf allocated by Next when cross-package, which should be freed when release
 }
 
+// TODO: ????
 var _ Reader = &LinkBuffer{}
 var _ Writer = &LinkBuffer{}
 
@@ -78,6 +80,7 @@ func (b *LinkBuffer) IsEmpty() (ok bool) {
 // ------------------------------------------ implement zero-copy reader ------------------------------------------
 
 // Next implements Reader.
+// 读取数据先判断buffer长度，是否足够，不足直接报错
 func (b *LinkBuffer) Next(n int) (p []byte, err error) {
 	if n <= 0 {
 		return
@@ -86,13 +89,18 @@ func (b *LinkBuffer) Next(n int) (p []byte, err error) {
 	if b.Len() < n {
 		return p, fmt.Errorf("link buffer next[%d] not enough", n)
 	}
+	// 原子操作，先减少buffer 长度
 	b.recalLen(-n) // re-cal length
 
 	// single node
+	// 如果当前read 的头节点数据够，则直接读取当前头节点数据
 	if b.isSingleNode(n) {
 		return b.read.Next(n), nil
 	}
 	// multiple nodes
+	// 需要跨节点读取数据时，如果要读取的数据长度可通过malloc 来申请，则申请一块地址，然后将这块地址添加到buffer 的cache 中
+	// 如果数据量过大或过小（使用频率不高，缓存意义不大），则临时申请
+	// TODO: 确认1K以下数据大小的使用频率，尽量也走缓存
 	var pIdx int
 	if block1k < n && n <= mallocMax {
 		p = malloc(n, n)
@@ -101,6 +109,7 @@ func (b *LinkBuffer) Next(n int) (p []byte, err error) {
 		p = make([]byte, n)
 	}
 	var l int
+	// 循环从read 的linker 上读取数据，然后不断移动read 的链表头节点，并拷贝数据到p 上
 	for ack := n; ack > 0; ack = ack - l {
 		l = b.read.Len()
 		if l >= ack {
@@ -111,12 +120,14 @@ func (b *LinkBuffer) Next(n int) (p []byte, err error) {
 		}
 		b.read = b.read.next
 	}
+	// TODO: ????
 	_ = pIdx
 	return p, nil
 }
 
 // Peek does not have an independent lifecycle, and there is no signal to
 // indicate that Peek content can be released, so Peek will not introduce mcache for now.
+// 实现和Next 差不多，就是不会去修改linkerbuffer 的数据长度，并且操作下游的node 时是是使用的Peek 方法
 func (b *LinkBuffer) Peek(n int) (p []byte, err error) {
 	if n <= 0 {
 		return
@@ -154,6 +165,7 @@ func (b *LinkBuffer) Peek(n int) (p []byte, err error) {
 }
 
 // Skip implements Reader.
+// 直接修改linkerbuffer 的数据长度，以及引用的底层linker node 的长度
 func (b *LinkBuffer) Skip(n int) (err error) {
 	if n <= 0 {
 		return
@@ -686,6 +698,7 @@ func (node *linkBufferNode) Reset() {
 
 // newLinkBufferNode create or reuse linkBufferNode.
 // Nodes with size <= 0 are marked as readonly, which means the node.buf is not allocated by this mcache.
+// 有全局的一个sync.Poll 对象池，每次分配时候，如果小于4K，则强制分配4K内存，具体的内存分配也是复用的，malloc 后需要手动free
 func newLinkBufferNode(size int) *linkBufferNode {
 	var node = linkedPool.Get().(*linkBufferNode)
 	if size <= 0 {
@@ -811,11 +824,15 @@ func (b *LinkBuffer) growth(n int) {
 
 // isSingleNode determines whether reading needs to cross nodes.
 // Must require b.Len() > 0
+// 决定读取n 个字节时，是否只需要读取单个节点即可。看当前的read 节点的剩余数据为空时，将读取节点链表的头指向下一个节点
+// 并判断下一个节点的数据长度是否足够
+// TODO: 这里有副作用，判断函数里更新了链表
 func (b *LinkBuffer) isSingleNode(readN int) (single bool) {
 	if readN <= 0 {
 		return true
 	}
 	l := b.read.Len()
+	// TODO: 是否b.read.next 会为空
 	for l == 0 {
 		b.read = b.read.next
 		l = b.read.Len()
@@ -823,6 +840,7 @@ func (b *LinkBuffer) isSingleNode(readN int) (single bool) {
 	return l >= readN
 }
 
+// slice 和 string 直接底层强转
 // zero-copy slice convert to string
 func unsafeSliceToString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
@@ -842,6 +860,7 @@ func unsafeStringToSlice(s string) (b []byte) {
 const mallocMax = block8k * block1k
 
 // malloc limits the cap of the buffer from mcache.
+// 底层用了 mcache 来分配内存，mcache 中针对不同大小的切片做了处理，最大化复用切片数组，当然如果要申请的内存过大，则直接新申请切片
 func malloc(size, capacity int) []byte {
 	if capacity > mallocMax {
 		return make([]byte, size, capacity)
@@ -850,6 +869,7 @@ func malloc(size, capacity int) []byte {
 }
 
 // free limits the cap of the buffer from mcache.
+// 走mcache 的通过mcache 来释放，其他的忽略，不引用后，依赖go的自动GC
 func free(buf []byte) {
 	if cap(buf) > mallocMax {
 		return

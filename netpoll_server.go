@@ -58,6 +58,7 @@ func (s *server) Run() (err error) {
 // Close this server with deadline.
 func (s *server) Close(ctx context.Context) error {
 	s.operator.Control(PollDetach)
+	// TODO: 判断是否需要判错
 	s.ln.Close()
 
 	var ticker = time.NewTicker(time.Second)
